@@ -1,0 +1,102 @@
+---
+title: "Prediction Assignment (Weight Lifting Exercises Dataset)"
+author: "Harshada Sasturkar"
+date: "14/08/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache=TRUE)
+```
+
+### Summary:
+In this assignment the "Weight Lifting Exercises Dataset" has been used. It contains data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different fashions. The classes(variable 'classe') represent each fashion. More information and the dataset can be obtained from (http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)  
+
+### Loading data:
+```{r,results='hide'}
+library(ggplot2)
+library(iterators)
+library(foreach)
+library(parallel)
+library(doParallel)
+library(caret)
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile = "pml-training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile = "pml-testing.csv")
+```
+
+### Preparing data :
+1. partitioning:
+First, the complete training dataset is partitioned into training and validation datasets. 3/4th data is used for training and remaining 1/4th will be used for validation. The testing dataset will be used at the end for prediction purpose.
+
+```{r}
+pmltrain<-read.csv("pml-training.csv")
+pmltest<-read.csv("pml-testing.csv")
+set.seed(1234)
+intrain<-createDataPartition(pmltrain$classe,p=0.75)[[1]]
+pmltrain1<-pmltrain[intrain,]
+pmlval<-pmltrain[-intrain,]
+```
+
+
+2. Features selection:
+The dataset consists of some features which contain statistical summary values Ex. min_,max_,avg_,stddev_,etc. which have alot of missing values. Also features like X,problem_id and user_name don't affect the outcome classe hence I've not considered such features.
+
+```{r}
+c<-grep("kurtosis|skewness|max|min|amplitude|var|avg|stddev",colnames(pmltrain))
+pmltrain2<-pmltrain1[,-c(c,1,2)]
+pmlval1<-pmlval[,-c(c,1,2)]
+pmltest1<-pmltest[,-c(c,1,2,160)]
+```
+
+### Model building:
+I have used random forest for training along with k-fold(in this case 5 fold) cross validation to increase overall accuracy.
+
+```{r}
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv",number = 5,allowParallel = TRUE)
+modpml<-train(classe~.,method="rf",data=pmltrain2,trControl = fitControl,verbose=FALSE)
+```
+  
+*Note: For faster building, I've used parallel processing.*
+
+### Testing(Validating):
+1. The model is first tested on the training data itself to see the in-sample error. 
+
+```{r}
+predtrain<-predict(modpml,newdata = pmltrain2)
+confusionMatrix(predtrain,as.factor(pmltrain2$classe))
+```
+
+Since accuracy is 100% the in-sample error rate is 0%. This can also be seen in following plot:
+```{r}
+qplot(as.factor(pmltrain2$classe),predtrain,xlab="Actual class",ylab="predicted class",main="Model vs Training dataset")
+```
+
+2. Now the model is tested on validation dataset to see the out-of-sample error.
+
+```{r}
+predval<-predict(modpml,newdata = pmlval1)
+confusionMatrix(predval,as.factor(pmlval1$classe))
+```
+
+Since accuracy is 99.9% the out-of-sample error rate is about 1%. Only a few values are misclassified. This can be seen in following plot:
+
+```{r}
+qplot(as.factor(pmlval1$classe),predval,xlab="Actual class",ylab="predicted class",main="Model vs Validation dataset")
+```
+
+### Prediction:
+Our model has high accuracy it can be now used for prediction on the testing dataset.
+
+```{r}
+predtest<-predict(modpml,newdata=pmltest1)
+```
+
+Following plots show the overall distribution of predicted classes and predicted classes for each user.
+
+```{r}
+pmltest1$user_name<-pmltest[,2]
+qplot(predtest,main="Overall distribution of classes",xlab="Predicted class", ylab="Number of observations")
+qplot(pmltest1$user_name,predtest,main="Predicted classes for each user",xlab="User name",ylab="Predicted class")
+```
